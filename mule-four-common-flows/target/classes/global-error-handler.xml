@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd">
+	<sub-flow name="setErrorPayload" doc:id="e1edc2fe-0cea-4a48-9f2a-ff94958b7967" >
+		<ee:transform doc:name="Set Payload" doc:id="d1e6cdf7-962e-49eb-ac72-55b1f209ec67">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+import modules::commonFunctions as commonFun
+output application/json
+fun isNotString(value)=(
+	not (value is String)
+)
+var errorCause=error.cause default {}
+var errorMessageObject=error.errorMessage
+var errorCauseType=(error.cause."type" default "ERROR")
+var errorMessageTypeOrPayload=(if((isNotString(error) or isNotString(error.errorMessage)) and error.errorMessage != null)(error.errorMessage.payload) else error.errorType) default {}
+var errorDescription=(error.description default "Error Occured" replace "\"" with "")
+var errorNameSpace=(error.errorType.namespace default "APP") as String
+var errorIdentifier=(error.errorType.identifier default "ERROR") as String
+var errorTypeString=([errorNameSpace,errorIdentifier] joinBy ":")
+var errorCauseDetail= error.exception.cause.detail default {
+	"exception": {
+		"errorCode": "500",
+		"message": "Internal Server Error"
+	}
+}
+var nativeErrorTypeNamespaces=["ANY","APP"]
+fun errorTypCheck(errorType)=(if ( errorType != null ) (if ( typeOf(errorType) == "String" ) commonFun::stringContainsInArray(errorType default "ERROR",nativeErrorTypeNamespaces)
+	else
+	commonFun::stringContainsInArray((error.errorType.namespace default "ERROR" as String),nativeErrorTypeNamespaces))
+		else false)
+
+---
+{
+	appName: app.name,
+	failingComponent: error.failingComponent,
+	transactionId: vars.correlationId,
+	requestTimeStamp: vars.requestTimeStamp,
+	errorType: if(isNotString(errorMessageTypeOrPayload)) (if ( !errorTypCheck(errorMessageTypeOrPayload) ) (error.errorMessage.payload.errorType default errorTypeString) else errorTypeString) else errorMessageTypeOrPayload,
+	errorDescription: if(isNotString(errorMessageTypeOrPayload)) (if ( !errorTypCheck(errorMessageTypeOrPayload) ) (error.errorMessage.payload.errorDescription default errorDescription) else errorDescription) else errorMessageTypeOrPayload,
+	errorRootCause: if(isNotString(errorMessageTypeOrPayload)) (if ( !errorTypCheck(errorMessageTypeOrPayload) and error.errorMessage != null) (error.errorMessage.payload.errorRootCause) else (if ( errorCauseType == "SOAP_FAULT" ) read(errorCauseDetail, "application/xml") else errorMessageObject)) else errorMessageTypeOrPayload
+}]]></ee:set-payload>
+				</ee:message>
+			</ee:transform>
+	</sub-flow>
+	<sub-flow name="setErrorHTTPStatus" doc:id="294e841c-c449-4d6c-a2c5-b2703f105d41" >
+		<ee:transform doc:name="Set httpStatus" doc:id="2e5b3bb6-2cf3-420d-8ed6-1014c39b9f12" >
+			<ee:message />
+			<ee:variables >
+				<ee:set-variable variableName="httpStatus" ><![CDATA[%dw 2.0
+import modules::httpStatusCodeMap as httpStatus
+output application/java
+---
+httpStatus::httpStatusMap[error.errorType.identifier default "ERROR"] default 500]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+	</sub-flow>
+	
+	<error-handler name="globalErrorHandler">
+		<on-error-continue enableNotifications="true"
+			logException="true" doc:name="On Error Continue"
+			doc:id="7db3d1ec-5dc7-4b7e-b5e2-0cc57a04fbd5"
+			type="RETRY_EXHAUSTED">
+			<flow-ref doc:name="getCorrelationId"
+				doc:id="0fd41853-6941-470a-b0d2-5b8007016da2"
+				name="getCorrelationId" />
+			<flow-ref doc:name="errorLogger"
+				doc:id="8a4d61ac-d2bf-4b83-b9eb-041d26ca41ef" name="errorLogger" />
+			<ee:transform doc:name="Set httpStatus"
+				doc:id="aecb6a32-339b-4b89-8a93-b0de8016dcac">
+				<ee:message />
+				<ee:variables>
+					<ee:set-variable variableName="httpStatus"><![CDATA[%dw 2.0
+import modules::httpStatusCodeMap as httpStatus
+output application/java
+---
+httpStatus::httpStatusMap[error.errorType.identifier default "ERROR"] default 500]]></ee:set-variable>
+				</ee:variables>
+			</ee:transform>
+			<flow-ref doc:name="setErrorPayload" doc:id="b1b9efc3-0d1c-4e75-bc34-cf3e66e7c3d6" name="setErrorPayload" />
+		</on-error-continue>
+		<on-error-propagate enableNotifications="true"
+			logException="true" doc:name="On Error Propagate"
+			doc:id="d0c311f6-6424-438e-9dd5-214bbfb1509d" type="ANY">
+			<flow-ref doc:name="getCorrelationId"
+				doc:id="484340ac-c390-4173-963f-eab03fd63fb4"
+				name="getCorrelationId" />
+			<flow-ref doc:name="errorLogger"
+				doc:id="fb60466f-96e4-4819-baaa-e89feef070e1" name="errorLogger" />
+			<ee:transform doc:name="Set httpStatus"
+				doc:id="7a4c3d6c-f664-43a8-9e9f-811d28119ead">
+				<ee:message>
+				</ee:message>
+				<ee:variables>
+					<ee:set-variable variableName="httpStatus"><![CDATA[%dw 2.0
+import modules::httpStatusCodeMap as httpStatus
+output application/java
+---
+httpStatus::httpStatusMap[error.errorType.identifier default "ERROR"] default 500]]></ee:set-variable>
+				</ee:variables>
+			</ee:transform>
+			<flow-ref doc:name="setErrorPayload" doc:id="881b254c-bf7f-48d7-8776-fe03e2908138" name="setErrorPayload"/>
+		</on-error-propagate>
+
+	</error-handler>
+</mule>
