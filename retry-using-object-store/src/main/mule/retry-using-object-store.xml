@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:os="http://www.mulesoft.org/schema/mule/os" xmlns:db="http://www.mulesoft.org/schema/mule/db"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+	<http:listener-config name="HTTP_Listener_config" doc:name="HTTP Listener config" doc:id="c1f57f20-258f-49b5-abb8-9811fa2ae717" >
+		<http:listener-connection host="0.0.0.0" port="8081" />
+	</http:listener-config>
+	<db:config name="Database_Config" doc:name="Database Config" doc:id="b98753f4-104f-4126-b4a0-f7b5686782a5" >
+		<db:oracle-connection host="localhost" user="SYSTEM" password="Surya@1998" instance="XE" />
+	</db:config>
+	<sub-flow name="imp_logic" doc:id="b997eccc-3fe4-4da9-971c-37ada1a9e697" >
+		<foreach doc:name="For Each" doc:id="bf41d606-eb68-4410-9916-f901fde86d06">
+			<choice doc:name="Choice" doc:id="134de71f-0042-4186-9a08-cf445b0703a7">
+			<when expression="#[(payload.age &gt;= 16)]">
+				<ee:transform doc:name="Transform Message" doc:id="05ae9673-8fd9-475f-9332-99f747607363">
+						<ee:message>
+							<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+payload ++ {"status": "success"}]]></ee:set-payload>
+						</ee:message>
+					</ee:transform>
+					<logger level="INFO" doc:name="Logger" doc:id="a744838a-8b20-4eb0-80a3-3cc9ba700f29" message="#[payload]" />
+					<db:insert doc:name="Insert" doc:id="a25c690a-1501-4d11-b790-57cd7f2099e1" config-ref="Database_Config">
+					<db:sql><![CDATA[ INSERT INTO demo_object_store(studentId, name, age, status)
+ VALUES (:studentId, :name, :age, :status)
+]]></db:sql>
+						<db:input-parameters><![CDATA[#[{
+	studentId: payload.studentId,
+	name: payload.name,
+	age: payload.age,
+	status: payload.status
+}]]]></db:input-parameters>
+				</db:insert>
+			</when>
+				<when expression="#[(payload.age &lt; 16)]">
+					<ee:transform doc:name="Transform Message" doc:id="1fcddcfd-4482-42b3-ba5f-5336ad9f6da9">
+						<ee:message>
+							<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+payload ++ {"status": "failure"}]]></ee:set-payload>
+						</ee:message>
+					</ee:transform>
+					<logger level="INFO" doc:name="Logger" doc:id="e67b5c4f-25fb-4cc2-8032-db6ad7e52ea9" message="#[payload]" />
+					<os:store doc:name="Store" doc:id="231016aa-c8af-467a-b89c-1fab9b288ec4" key="#[payload.studentId]" />
+				</when>
+		</choice>
+		</foreach>
+	</sub-flow>
+	<flow name="retry-using-object-storeFlow" doc:id="b5b93011-73b9-406a-9c9f-8f11fd3fa300" >
+		<http:listener doc:name="Listener" doc:id="39968db3-a22f-412e-ae65-7193182117c6" config-ref="HTTP_Listener_config" path="/retry"/>
+		<logger level="INFO" doc:name="Logger" doc:id="73e40857-b10d-4875-a080-edcf971bb5bf" message="#[payload]"/>
+		<flow-ref doc:name="Flow Reference" doc:id="4b90fa21-b5ed-4e48-ad1d-856166939e2e" name="imp_logic" />
+	</flow>
+	<flow name="retry-using-object-storeFlow1" doc:id="fcf51f68-1c98-4844-8497-11f7b39b833a" >
+		<scheduler doc:name="Scheduler" doc:id="3e068ae5-4fab-45fb-883f-0d97118fc3ee" >
+			<scheduling-strategy >
+				<fixed-frequency frequency="4" timeUnit="MINUTES"/>
+			</scheduling-strategy>
+		</scheduler>
+		<os:retrieve-all doc:name="Retrieve all" doc:id="ddfdd011-334a-4c26-9fe2-d17c9afefff4" />
+		<ee:transform doc:name="Transform Message" doc:id="b4677b63-b01f-42d7-88f8-d8580437075b" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+(payload mapObject ((value, key, index) ->
+'$(key)': read(value, 'application/json')) 
+pluck ((value, key, index) -> value )) 
+]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<logger level="INFO" doc:name="Logger" doc:id="d375fcfe-da3f-416a-aca2-a6d9f88c070a" message="#[payload]"/>
+		<ee:transform doc:name="Transform Message" doc:id="8540af47-373e-40ed-9064-18a65ecc3ea2" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+payload map ((item, index) -> 
+{
+    "studentId": item.studentId,
+    "name": item.name,
+    "age": item.age + 16,
+
+}
+)]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<flow-ref doc:name="Flow Reference" doc:id="0eb78ece-b01f-4a43-a8c0-668b08187042" name="imp_logic"/>
+	</flow>
+</mule>
