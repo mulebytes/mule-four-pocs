@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:jms="http://www.mulesoft.org/schema/mule/jms"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/jms http://www.mulesoft.org/schema/mule/jms/current/mule-jms.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd">
+	<http:listener-config name="HTTP_Listener_config" doc:name="HTTP Listener config" doc:id="3b625f64-6529-458d-b1fb-3dc7ca894a66" >
+		<http:listener-connection host="0.0.0.0" port="8081" />
+	</http:listener-config>
+	<jms:config name="JMS_Config" doc:name="JMS Config" doc:id="e4e181ba-5ff6-4633-a2a7-b7ed5592cff7" >
+		<jms:active-mq-connection username="admin" password="admin" >
+			<jms:factory-configuration brokerUrl="tcp://localhost:61616" />
+		</jms:active-mq-connection>
+	</jms:config>
+	<sub-flow name="imp_logic" doc:id="227ba273-0110-473d-9bf9-81c0feda8ee0" >
+		<foreach doc:name="For Each" doc:id="5f61e66d-d242-4f00-9ef7-83863404bff3">
+			<choice doc:name="Choice" doc:id="079ab6ef-e213-4474-8b57-11dcaf5d8b69">
+			<when expression='#[((payload.age &gt;= 16) and (payload.status == "Failure"))]'>
+					<set-payload value="#[[payload]]" doc:name="Set Payload" doc:id="61906f24-76ff-4b56-bbc5-184e8c7dc320" />
+					<ee:transform doc:name="Transform Message" doc:id="b718ef5b-c3f0-414f-a54b-e58bd0b55f9f">
+						<ee:message>
+							<ee:set-payload><![CDATA[%dw 2.0
+import * from dw::util::Values
+output application/json
+---
+payload update "status" with "success"]]></ee:set-payload>
+						</ee:message>
+					</ee:transform>
+					<logger level="INFO" doc:name="Logger" doc:id="e8a36cc1-8c52-4ed8-9879-e75773f4978b" message="#[payload]" />
+				</when>
+			<when expression="#[(payload.age &gt;= 16)]">
+				<ee:transform doc:name="Transform Message" doc:id="eaf9e277-8be5-4223-9331-b5e187201638">
+					<ee:message>
+						<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+payload ++ {"status": "success"}]]></ee:set-payload>
+					</ee:message>
+				</ee:transform>
+					<logger level="INFO" doc:name="Logger" doc:id="4f76dfbf-1ebd-4508-85ae-0947332a894e" message="#[payload]" />
+			</when>
+			<when expression="#[(payload.age &lt; 16)]">
+				<ee:transform doc:name="Transform Message" doc:id="e77a748e-beb6-4eb4-a564-de82b6c614b7">
+					<ee:message>
+						<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+payload ++ {"status": "Failure"} ]]></ee:set-payload>
+					</ee:message>
+				</ee:transform>
+					<logger level="INFO" doc:name="Logger" doc:id="bdc44b57-783d-43e2-a36a-a0433204674f" message="#[payload]" />
+					<jms:publish doc:name="Publish" doc:id="7653cb3b-bef5-4c92-8328-677d25114a45" config-ref="JMS_Config" destination="Failure.Q">
+						<jms:message outboundContentType="application/json" />
+					</jms:publish>
+			</when>
+				
+		</choice>
+		</foreach>
+	</sub-flow>
+	<flow name="reprocess-demoFlow" doc:id="902ebdd4-5eab-4bac-85fd-097e7430de4e" >
+		<http:listener doc:name="Listener" doc:id="356f02d5-b0fd-49c6-ba1e-ee3cebb6599a" config-ref="HTTP_Listener_config" path="/reprocessing"/>
+		<logger level="INFO" doc:name="Logger" doc:id="3e45b774-fd71-4236-a70b-5375749bc850" message="#[payload]"/>
+		<flow-ref doc:name="Flow Reference" doc:id="361d61f2-b1a3-4131-987d-724593e66cc4" name="imp_logic" />
+	</flow>
+	<flow name="reprocessing_strategy" doc:id="4b681e6c-1fd0-453f-88d3-edf4692f1a9b" >
+		<scheduler doc:name="Scheduler" doc:id="215a1e4f-c22a-4478-9558-b70f2e3996a1" >
+			<scheduling-strategy >
+				<fixed-frequency frequency="2" timeUnit="MINUTES"/>
+			</scheduling-strategy>
+		</scheduler>
+		<jms:consume doc:name="Consume" doc:id="702415fd-8801-4ef3-b983-19fdc7105862" config-ref="JMS_Config" destination="Failure.Q" contentType="application/json" maximumWait="20000"/>
+		<ee:transform doc:name="Transform Message" doc:id="25a37139-1cfb-425d-962b-463050811b6d" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+import * from dw::util::Values
+output application/json
+---
+[payload update "age" with (if (payload.age < 16) payload.age as Number + 16  else payload.age)]]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<flow-ref doc:name="Flow Reference" doc:id="ae9efdb2-8e32-4353-affb-3e3dbac6d80a" name="imp_logic"/>
+	</flow>
+</mule>
